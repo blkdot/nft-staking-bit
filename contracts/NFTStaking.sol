@@ -1,12 +1,14 @@
-// SPDX-License-Identifier: MIT LICENSE
+// SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.4;
+pragma solidity ^0.8.0;
 
-import "./Context.sol";
-import "./Ownable.sol";
-import "./MandoX.sol";
-import "./Lacedameon.sol";
-import "./Pausable.sol";
+import "hardhat/console.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
+
+import "./Test.sol";
 
 contract NFTStaking is Ownable, IERC721Receiver, Pausable {
     // struct to store a sta ke's token, owner, and lastCalimed
@@ -17,45 +19,40 @@ contract NFTStaking is Ownable, IERC721Receiver, Pausable {
     }
 
     event TokenStaked(address owner, uint256 tokenId, uint256 lastCalimed);
-    event MandoxClaimed(uint256 tokenId, uint256 earned, bool unstaked);
-
-    // reference to the Lacedameon NFT contract
-    Lacedameon lacedameon;
-    // reference to the $Mandox contract for $MNX earnings
-    MandoX mandox;
+    event TokenClaimed(uint256 tokenId, bool unstaked);
+    // reference to the AirNFTs NFT contract
+    IERC721 airnfts;
+    // reference to the erc20 contract;
+    Test erc20;
 
     // maps tokenId to stake
     mapping(uint256 => Stake) public registery; 
 
-    address public rewardingWallet;
-
-    // Nft earn 10000 $Mandox per day
-    uint256 public constant DAILY_MANDOX_RATE = 10000 wei;
-    // Nft must have 2 days worth of $Mandox to unstake or else it's too cold
+    uint256 public constant DAILY_PROFIT_RATE = 60;
+    // Nft must have 2 days worth of erc20 to unstake or else it's too cold
     uint256 public constant MINIMUM_TO_EXIT = 2 days;
 
-    // amount of $Mandox earned so far
-    uint256 public totalMandoxEarned;
+    // amount of erc20 earned so far
+    uint256 public totalEarned;
     // number of Nft staked in the Registery
-    uint256 public totalMandoxStaked;
-    // the last time $Mandox was claimed
+    uint256 public totalStaked;
+
     uint256 public lastClaimTimestamp;
 
-    // emergency rescue to allow unstaking without any checks but without $MANDOX
+    // emergency rescue to allow unstaking without any checks but without erc20
     bool public rescueEnabled = false;
 
-    constructor(address _lacedameon, address payable _mandox, address _rewardingWallet) { 
-        lacedameon = Lacedameon(_lacedameon);
-        mandox = MandoX(_mandox);
-        rewardingWallet = _rewardingWallet;
+    constructor(address _nftAddr, address _erc20Addr) { 
+        airnfts = IERC721(_nftAddr);
+        erc20 = Test(_erc20Addr);
     }
 
     function addManyToRegistery(address account, uint16[] calldata tokenIds) external {
-        require(account == _msgSender() || _msgSender() == address(lacedameon), "MANDOX: CAN NOT STAKE");
+        require(account == _msgSender() || _msgSender() == address(airnfts), "STK: CAN NOT STAKE");
         for (uint i = 0; i < tokenIds.length; i++) {
-            if (_msgSender() != address(lacedameon)) { // dont do this step if its a mint + stake
-                require(lacedameon.ownerOf(tokenIds[i]) == _msgSender(), "MANDOX: IS NOT OWNER");
-                lacedameon.transferFrom(_msgSender(), address(this), tokenIds[i]);
+            if (_msgSender() != address(airnfts)) { // dont do this step if its a mint + stake
+                require(airnfts.ownerOf(tokenIds[i]) == _msgSender(), "STK: IS NOT OWNER");
+                airnfts.transferFrom(_msgSender(), address(this), tokenIds[i]);
             } else if (tokenIds[i] == 0) {
                 continue; // there may be gaps in the array for stolen tokens
             }
@@ -63,56 +60,42 @@ contract NFTStaking is Ownable, IERC721Receiver, Pausable {
         }
     }
 
-    function _addNftToRegistery(address account, uint256 tokenId) internal whenNotPaused _updateEarnings {
+    function _addNftToRegistery(address account, uint256 tokenId) internal whenNotPaused {
         registery[tokenId] = Stake({
             owner: account,
             tokenId: uint16(tokenId),
             lastCalimed: uint80(block.timestamp)
         });
-        totalMandoxStaked += 1;
+        totalStaked += 1;
         emit TokenStaked(account, tokenId, block.timestamp);
     }
 
-    /** CLAIMING / UNSTAKING */
+     /** CLAIMING / UNSTAKING */
 
     /**
-    * realize $MANDOX earnings and optionally unstake tokens from the Registery
-    * to unstake a Nft it will require it has 2 days worth of $MANDOX unclaimed
     * @param tokenIds the IDs of the tokens to claim earnings from
     * @param unstake whether or not to unstake ALL of the tokens listed in tokenIds
     */
-    function claimManyFromRegistery(uint16[] calldata tokenIds, bool unstake) external whenNotPaused _updateEarnings {
-        uint256 rewards = 0;
+    function claimManyFromRegistery(uint16[] calldata tokenIds, bool unstake) external whenNotPaused {
         for (uint i = 0; i < tokenIds.length; i++) {
-            rewards += _claimNftFromRegistery(tokenIds[i], unstake);
+            _claimNftFromRegistery(tokenIds[i], unstake);
         }
-        if (rewards == 0) return;
-        mandox.transferFrom(rewardingWallet, _msgSender(), rewards);
     }
 
     /**
-    * realize $MANDOX earnings for a single NFT and optionally unstake it
-    * if not unstaking, pay a 20% tax to the staked Wolves
-    * if unstaking, there is a 50% chance all $MANDOX is stolen
     * @param tokenId the ID of the NFT to claim earnings from
     * @param unstake whether or not to unstake the NFT
-    * @return rewards - the amount of $MANDOX earned
     */
-    function _claimNftFromRegistery(uint256 tokenId, bool unstake) internal returns (uint256 rewards) {
+    function _claimNftFromRegistery(uint256 tokenId, bool unstake) internal {
         Stake memory stake = registery[tokenId];
-        require(stake.owner == _msgSender(), "MANDOX: SHOULD BE OWNER");
-        require(!(unstake && block.timestamp - stake.lastCalimed < MINIMUM_TO_EXIT), "MANDOX: CAN NOT CLAIM YET");
-        if (totalMandoxEarned < mandox.balanceOf(rewardingWallet)) {
-            rewards = (block.timestamp - stake.lastCalimed) * DAILY_MANDOX_RATE / 1 days;
-        } else if (stake.lastCalimed > lastClaimTimestamp) {
-            rewards = 0; // $MANDOX production stopped already
-        } else {
-            rewards = (lastClaimTimestamp - stake.lastCalimed) * DAILY_MANDOX_RATE / 1 days; // stop earning additional $MANDOX if it's all been earned
-        }
+        require(stake.owner == _msgSender(), "STK: SHOULD BE OWNER");
+        // require(!(unstake && block.timestamp - stake.lastCalimed < MINIMUM_TO_EXIT), "STK: CAN NOT CLAIM YET");
+
+        erc20.updateStakeTokenForNFT(_msgSender());
         if (unstake) {
-            lacedameon.safeTransferFrom(address(this), _msgSender(), tokenId, ""); // send back NFT
+            airnfts.safeTransferFrom(address(this), _msgSender(), tokenId, ""); // send back NFT
             delete registery[tokenId];
-            totalMandoxStaked -= 1;
+            totalStaked -= 1;
         } else {
             registery[tokenId] = Stake({
                 owner: _msgSender(),
@@ -120,40 +103,27 @@ contract NFTStaking is Ownable, IERC721Receiver, Pausable {
                 lastCalimed: uint80(block.timestamp)
             }); // reset stake
         }
-        emit MandoxClaimed(tokenId, rewards, unstake);
+        emit TokenClaimed(tokenId, unstake);
     }
-
 
     /**
     * emergency unstake tokens
     * @param tokenIds the IDs of the tokens to claim earnings from
     */
     function rescue(uint256[] calldata tokenIds) external {
-        require(rescueEnabled, "MANDOX: RESCUE DISABLED");
+        require(rescueEnabled, "STK: RESCUE DISABLED");
         uint256 tokenId;
         Stake memory stake;
         for (uint i = 0; i < tokenIds.length; i++) {
             tokenId = tokenIds[i];
             stake = registery[tokenId];
-            require(stake.owner == _msgSender(), "MANDOX: SHOULD BE OWNER");
-            lacedameon.safeTransferFrom(address(this), _msgSender(), tokenId, ""); // send back Lacedameon
+            require(stake.owner == _msgSender(), "STK: SHOULD BE OWNER");
+            airnfts.safeTransferFrom(address(this), _msgSender(), tokenId, ""); // send back Lacedameon
             delete registery[tokenId];
-            totalMandoxStaked -= 1;
-            emit MandoxClaimed(tokenId, 0, true);
+            totalStaked -= 1;
+            emit TokenClaimed(tokenId, true);
         }
     }
-
-    modifier _updateEarnings() {
-        if (totalMandoxEarned < mandox.balanceOf(rewardingWallet)) {
-            totalMandoxEarned += 
-                (block.timestamp - lastClaimTimestamp)
-                * totalMandoxStaked
-                * DAILY_MANDOX_RATE / 1 days; 
-            lastClaimTimestamp = block.timestamp;
-        }
-        _;
-    }
-
 
     /**
     * allows owner to enable "rescue mode"
@@ -176,7 +146,7 @@ contract NFTStaking is Ownable, IERC721Receiver, Pausable {
         uint256,
         bytes calldata
     ) external pure override returns (bytes4) {
-        require(from == address(0x0), "MANDOX: CAN NOT STAKE DIRECTLY");
+        require(from == address(0x0), "STK: CAN NOT STAKE DIRECTLY");
         return IERC721Receiver.onERC721Received.selector;
     }
 }
