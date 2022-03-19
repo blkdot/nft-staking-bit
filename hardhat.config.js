@@ -22,7 +22,7 @@ task("accounts", "Prints the list of accounts", async (taskArgs, hre) => {
   networks: {
     localhost: {
       url: "http://127.0.0.1:8545",
-      accounts: ["6138e2d6a61f5dfe758ec96c46811e0f0a2311bb9381dbdfd17d639d87b15e39"]
+      // accounts: ["6138e2d6a61f5dfe758ec96c46811e0f0a2311bb9381dbdfd17d639d87b15e39"]
     },
     hardhat: {
       // forking: {
