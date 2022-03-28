@@ -38,6 +38,14 @@ describe("NFT Staking", function () {
 
     const txPackStaking = await nftStakingContract.addManyToRegistery(deployer.address, [1, 2, 3, 4]);
     await txPackStaking.wait();
+    
+    const tokens = await nftStakingContract.getStakeInfoOfAccount(deployer.address);
+    
+    await nftStakingContract.claimAllOfAccount();
+    const tokens1 = await nftStakingContract.getStakeInfoOfAccount(deployer.address);
+    
+    const txPackStaking1 = await nftStakingContract.addManyToRegistery(deployer.address, [1, 2, 3, 4]);
+    await txPackStaking1.wait();
 
     expect(await airNFTs.ownerOf(1)).to.equal(nftStakingContract.address);
     expect(await airNFTs.ownerOf(2)).to.equal(nftStakingContract.address);

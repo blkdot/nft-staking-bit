@@ -7,13 +7,13 @@ import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
-
+import "hardhat/console.sol";
 import "./Test.sol";
 
 contract NFTStaking is Ownable, IERC721Receiver, Pausable {
     // struct to store a sta ke's token, owner, and lastCalimed
     struct Stake {
-        uint16 tokenId;
+        uint256 tokenId;
         uint80 lastCalimed;
         address owner;
     }
@@ -27,6 +27,7 @@ contract NFTStaking is Ownable, IERC721Receiver, Pausable {
 
     // maps tokenId to stake
     mapping(uint256 => Stake) public registery; 
+    mapping (address => uint256[]) public registeryForAccounts;
 
     uint256 public constant DAILY_PROFIT_RATE = 60;
     // Nft must have 2 days worth of erc20 to unstake or else it's too cold
@@ -47,7 +48,13 @@ contract NFTStaking is Ownable, IERC721Receiver, Pausable {
         erc20 = Test(_erc20Addr);
     }
 
-    function addManyToRegistery(address account, uint16[] calldata tokenIds) external {
+    /**
+    * @param account account's address
+    */
+    function getStakeInfoOfAccount(address account) external view returns (uint[] memory) {
+        return registeryForAccounts[account];
+    }
+    function addManyToRegistery(address account, uint256[] calldata tokenIds) external {
         require(account == _msgSender() || _msgSender() == address(airnfts), "STK: CAN NOT STAKE");
         for (uint i = 0; i < tokenIds.length; i++) {
             if (_msgSender() != address(airnfts)) { // dont do this step if its a mint + stake
@@ -63,31 +70,63 @@ contract NFTStaking is Ownable, IERC721Receiver, Pausable {
     function _addNftToRegistery(address account, uint256 tokenId) internal whenNotPaused {
         registery[tokenId] = Stake({
             owner: account,
-            tokenId: uint16(tokenId),
+            tokenId: uint256(tokenId),
             lastCalimed: uint80(block.timestamp)
         });
         totalStaked += 1;
+
+        registeryForAccounts[account].push(tokenId);
+
         emit TokenStaked(account, tokenId, block.timestamp);
     }
+    /**
+    * claim all of account
+    */
+    function claimAllOfAccount() external whenNotPaused {
+        uint len = registeryForAccounts[_msgSender()].length - 1;
+        for (uint i = len; i >= 0; i--) {
+            console.log(i);
+            console.log(registeryForAccounts[_msgSender()][i]);
+            console.log(registery[registeryForAccounts[_msgSender()][i]].owner);
+            console.log(registery[registeryForAccounts[_msgSender()][i]].tokenId);
+            _claimNftFromRegistery(registeryForAccounts[_msgSender()][i], true);
+            if (i == 0){
+                break;
+            }
+        }
+    }
 
-     /** CLAIMING / UNSTAKING */
-
+    /** CLAIMING / UNSTAKING */
     /**
     * @param tokenIds the IDs of the tokens to claim earnings from
     * @param unstake whether or not to unstake ALL of the tokens listed in tokenIds
     */
-    function claimManyFromRegistery(uint16[] calldata tokenIds, bool unstake) external whenNotPaused {
+    function claimManyFromRegistery(uint256[] calldata tokenIds, bool unstake) external whenNotPaused {
         for (uint i = 0; i < tokenIds.length; i++) {
             _claimNftFromRegistery(tokenIds[i], unstake);
         }
     }
+    function removeTokenForAccount(address account, uint index) internal{
+        if (index >= registeryForAccounts[account].length) return;
 
+        for (uint i = index; i<registeryForAccounts[account].length-1; i++){
+            registeryForAccounts[account][i] = registeryForAccounts[account][i+1];
+        }
+        //delete registeryForAccounts[account][registeryForAccounts[account].length-1];
+        (registeryForAccounts[account]).pop();
+        console.log("remove Token Index:", index);
+        console.log("remove Token for acccount length:", (registeryForAccounts[account]).length);
+    }
     /**
     * @param tokenId the ID of the NFT to claim earnings from
     * @param unstake whether or not to unstake the NFT
     */
     function _claimNftFromRegistery(uint256 tokenId, bool unstake) internal {
         Stake memory stake = registery[tokenId];
+        if (stake.owner != _msgSender()){
+            console.log(stake.owner);
+            console.log(_msgSender());
+        }
         require(stake.owner == _msgSender(), "STK: SHOULD BE OWNER");
         // require(!(unstake && block.timestamp - stake.lastCalimed < MINIMUM_TO_EXIT), "STK: CAN NOT CLAIM YET");
 
@@ -96,16 +135,30 @@ contract NFTStaking is Ownable, IERC721Receiver, Pausable {
             airnfts.safeTransferFrom(address(this), _msgSender(), tokenId, ""); // send back NFT
             delete registery[tokenId];
             totalStaked -= 1;
+            uint index = 0;
+            console.log("Target Token ID:", tokenId);
+            for (uint i = registeryForAccounts[_msgSender()].length - 1; i >= 0; i--) {
+                if (registeryForAccounts[_msgSender()][i] == tokenId ){
+                    index = i;
+                    console.log("Target Token index:", index);
+                    break;
+                }
+                if (i == 0){
+                    break;
+                }
+            }
+            removeTokenForAccount(_msgSender(), index);
         } else {
             registery[tokenId] = Stake({
                 owner: _msgSender(),
-                tokenId: uint16(tokenId),
+                tokenId: uint256(tokenId),
                 lastCalimed: uint80(block.timestamp)
             }); // reset stake
         }
         emit TokenClaimed(tokenId, unstake);
     }
 
+    
     /**
     * emergency unstake tokens
     * @param tokenIds the IDs of the tokens to claim earnings from
@@ -149,4 +202,6 @@ contract NFTStaking is Ownable, IERC721Receiver, Pausable {
         require(from == address(0x0), "STK: CAN NOT STAKE DIRECTLY");
         return IERC721Receiver.onERC721Received.selector;
     }
+
+
 }
