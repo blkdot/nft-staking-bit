@@ -7,7 +7,6 @@ import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
-import "hardhat/console.sol";
 import "./Test.sol";
 
 contract NFTStaking is Ownable, IERC721Receiver, Pausable {
@@ -85,10 +84,6 @@ contract NFTStaking is Ownable, IERC721Receiver, Pausable {
     function claimAllOfAccount() external whenNotPaused {
         uint len = registeryForAccounts[_msgSender()].length - 1;
         for (uint i = len; i >= 0; i--) {
-            console.log(i);
-            console.log(registeryForAccounts[_msgSender()][i]);
-            console.log(registery[registeryForAccounts[_msgSender()][i]].owner);
-            console.log(registery[registeryForAccounts[_msgSender()][i]].tokenId);
             _claimNftFromRegistery(registeryForAccounts[_msgSender()][i], true);
             if (i == 0){
                 break;
@@ -114,8 +109,6 @@ contract NFTStaking is Ownable, IERC721Receiver, Pausable {
         }
         //delete registeryForAccounts[account][registeryForAccounts[account].length-1];
         (registeryForAccounts[account]).pop();
-        console.log("remove Token Index:", index);
-        console.log("remove Token for acccount length:", (registeryForAccounts[account]).length);
     }
     /**
     * @param tokenId the ID of the NFT to claim earnings from
@@ -123,10 +116,6 @@ contract NFTStaking is Ownable, IERC721Receiver, Pausable {
     */
     function _claimNftFromRegistery(uint256 tokenId, bool unstake) internal {
         Stake memory stake = registery[tokenId];
-        if (stake.owner != _msgSender()){
-            console.log(stake.owner);
-            console.log(_msgSender());
-        }
         require(stake.owner == _msgSender(), "STK: SHOULD BE OWNER");
         // require(!(unstake && block.timestamp - stake.lastCalimed < MINIMUM_TO_EXIT), "STK: CAN NOT CLAIM YET");
 
@@ -136,11 +125,9 @@ contract NFTStaking is Ownable, IERC721Receiver, Pausable {
             delete registery[tokenId];
             totalStaked -= 1;
             uint index = 0;
-            console.log("Target Token ID:", tokenId);
             for (uint i = registeryForAccounts[_msgSender()].length - 1; i >= 0; i--) {
                 if (registeryForAccounts[_msgSender()][i] == tokenId ){
                     index = i;
-                    console.log("Target Token index:", index);
                     break;
                 }
                 if (i == 0){
